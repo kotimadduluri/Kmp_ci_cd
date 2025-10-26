@@ -12,7 +12,7 @@ jobs:
     env:
       ANDROID_APP_PATH: composeApp
       IOS_APP_PATH: iosApp
-      ANDROID_APP_ID: ${{ secrets.ANDROID_APP_ID }}
+      ANDROID_APP_ID: ${{ secrets.ANDROID_APP_ID }} # Must match the applicationId in build.gradle.kts
       IOS_APP_ID: ${{ secrets.IOS_APP_ID }}
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
       TESTER_GROUP: "new-release-updates"
@@ -20,6 +20,8 @@ jobs:
       KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      # Define Android SDK build tools path for aapt/apksigner
+      ANDROID_SDK_BUILD_TOOLS: /usr/local/share/android-sdk/build-tools
 
     steps:
       # ---------- 1. Checkout ----------
@@ -33,56 +35,83 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ---------- 3. Decode keystore ----------
+      # ---------- 3. Gradle Cache (Speeds up Android builds) ----------
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # ---------- 4. Decode keystore (Needed for Android signing) ----------
       - name: Decode keystore
         run: |
           echo "$KEYSTORE_BASE64" | base64 --decode > $ANDROID_APP_PATH/keystore.jks
-          ls -l $ANDROID_APP_PATH/keystore.jks
 
-      # ---------- 4. Install Firebase Tools (Installed once globally) ----------
+      # ---------- 5. Install Firebase Tools (Installed once globally) ----------
       - name: Install Firebase Tools
         run: npm install -g firebase-tools
 
-      # ---------- 5. Increment Android version ----------
+      # ---------- 6. Increment Android version ----------
       - name: Increment Android versionCode
         run: |
           FILE="$ANDROID_APP_PATH/build.gradle.kts"
-          # Get current code, assuming versionCode is on its own line followed by a number
           CURRENT_CODE=$(grep "versionCode" $FILE | grep -o '[0-9]\+' | head -n 1)
           NEW_CODE=$((CURRENT_CODE + 1))
-          
-          # Use sed to update versionCode and versionName
           sed -i "" "s/versionCode $CURRENT_CODE/versionCode $NEW_CODE/" $FILE
           VERSION_NAME="1.0.$NEW_CODE"
-          # The regex 'versionName \".*\"' handles dynamic version names
           sed -i "" "s/versionName \".*\"/versionName \"$VERSION_NAME\"/" $FILE
-          
           echo "Android versionCode=$NEW_CODE, versionName=$VERSION_NAME"
 
-      # ---------- 6. Build Android APK ----------
+      # ---------- 7. Build Android APK ----------
       - name: Build Android APK
         run: ./gradlew :composeApp:assembleRelease
 
-      # ---------- 7. Find Dynamic APK Path ----------
+      # ---------- 8. Find Dynamic APK Path (Ensures correct file path) ----------
       - name: Find APK File Path
         id: find_apk
         run: |
           ANDROID_OUTPUT_DIR="$ANDROID_APP_PATH/build/outputs/apk/release"
-          
-          # Use 'find' to locate any file ending in .apk and take the first match
+          # Finds the first .apk file recursively and quits
           APK_FILE_PATH=$(find "$ANDROID_OUTPUT_DIR" -name "*.apk" -print -quit)
           
           if [ -z "$APK_FILE_PATH" ]; then
-            echo "Error: Could not find any .apk file in $ANDROID_OUTPUT_DIR"
+            echo "Error: Could not find any .apk file in $ANDROID_OUTPUT_DIR. Listing contents for debug:"
             ls -R $ANDROID_APP_PATH/build/outputs/apk/
             exit 1
           fi
           
-          # This command sets the output variable for the next step (GitHub Actions syntax)
           echo "::set-output name=apk_path::$APK_FILE_PATH"
           echo "Found APK at: $APK_FILE_PATH"
 
-      # ---------- 8. Upload Android to Firebase (Uses Dynamic Path) ----------
+      # ---------- 8.5 Debug APK Information (NEW: Helps resolve Invalid Application ID/Signing) ----------
+      - name: Debug APK Package and Signing Info
+        if: success() || failure() # Run this even if the build fails, for debugging
+        run: |
+          APK_PATH="${{ steps.find_apk.outputs.apk_path }}"
+          BUILD_TOOLS=$(ls -d $ANDROID_SDK_BUILD_TOOLS/* | tail -n 1) # Get latest build tools version
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "Skipping APK debug: APK file not found."
+            exit 0
+          fi
+          
+          echo "--- 📦 Package Name Verification (aapt) ---"
+          # Uses aapt to verify the package name (Application ID)
+          $BUILD_TOOLS/aapt dump badging "$APK_PATH" | grep 'package: name='
+          
+          echo "--- 🔑 Signing Certificate Verification (apksigner) ---"
+          # Uses apksigner to verify signing details
+          $BUILD_TOOLS/apksigner verify --print-certs "$APK_PATH"
+          
+          echo "IMPORTANT: The 'package: name=' output MUST match your secret ${{ secrets.ANDROID_APP_ID }}."
+          echo "The signing certificate output MUST match your expected release key for successful installation."
+
+
+      # ---------- 9. Upload Android to Firebase (Uses Dynamic Path) ----------
       - name: Upload Android to Firebase
         run: |
           firebase appdistribution:distribute ${{ steps.find_apk.outputs.apk_path }} \
@@ -91,51 +120,53 @@ jobs:
             --release-notes "Android build from GitHub Actions - Commit ${{ github.sha }}" \
             --token "$FIREBASE_TOKEN"
 
-      # ---------- 9. Setup Xcode ----------
+      # ---------- 10. Setup Xcode ----------
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.0'
 
-      # ---------- 10. Build KMP iOS Framework ----------
-      - name: Build KMP iOS Framework
-        run: ./gradlew :shared:packForXcode
+      # ---------- 11. Xcode Cache (Speeds up iOS builds) ----------
+      - name: Cache Xcode Build Artifacts
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData
+            ${{ env.IOS_APP_PATH }}/build
+          key: ${{ runner.os }}-xcode-deriveddata-${{ hashFiles('**/*.podspec', '**/Podfile.lock') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-xcode-deriveddata-
 
-      # ---------- 11. Increment iOS build number (FIXED: Increments by 1) ----------
+      # ---------- 12. Build KMP iOS Framework (Fix: Using :composeApp module) ----------
+      - name: Build KMP iOS Framework
+        run: ./gradlew :composeApp:packForXcode # Confirmed to be the common KMP module name
+
+      # ---------- 13. Increment iOS build number ----------
       - name: Increment iOS build number
         run: |
           INFOPLIST="$IOS_APP_PATH/iosApp/Info.plist"
-          
-          # Read the current CFBundleVersion (Build Number)
           CURRENT_BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $INFOPLIST)
-          
-          # Calculate the new build number
           NEW_BUILD_NUMBER=$((CURRENT_BUILD_NUMBER + 1))
-          
-          # Write the new build number back to the Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" $INFOPLIST
-          
           echo "iOS build number incremented from $CURRENT_BUILD_NUMBER to $NEW_BUILD_NUMBER"
 
-      # ---------- 12. Build iOS IPA ----------
+      # ---------- 14. Build iOS IPA ----------
       - name: Build iOS IPA
         run: |
           cd $IOS_APP_PATH
-          # Archive the project
           xcodebuild \
             -workspace iosApp.xcworkspace \
             -scheme iosApp \
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/iosApp.xcarchive archive
-          # Export the IPA
           xcodebuild \
             -exportArchive \
             -archivePath build/iosApp.xcarchive \
             -exportOptionsPlist ExportOptions.plist \
             -exportPath build
 
-      # ---------- 13. Upload iOS to Firebase ----------
+      # ---------- 15. Upload iOS to Firebase ----------
       - name: Upload iOS to Firebase
         run: |
           firebase appdistribution:distribute $IOS_APP_PATH/build/iosApp.ipa \
