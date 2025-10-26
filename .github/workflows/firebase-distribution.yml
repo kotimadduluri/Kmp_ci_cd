@@ -34,7 +34,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ---------- 3. Gradle Cache (Speeds up Android builds) ----------
+      # ---------- 3. Gradle Cache ----------
       - name: Cache Gradle Dependencies
         uses: actions/cache@v3
         with:
@@ -45,13 +45,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # ---------- 4. Decode keystore (FIXED for integrity) ----------
+      # ---------- 4. Decode Keystore ----------
       - name: Decode keystore
         run: |
-          # The -n flag prevents an extra newline from corrupting the Base64 decode.
-          echo -n "$KEYSTORE_BASE64" | base64 --decode > $ANDROID_APP_PATH/keystore.jks
+          printf "%s" "$KEYSTORE_BASE64" | base64 --decode > $ANDROID_APP_PATH/keystore.jks
+          ls -l $ANDROID_APP_PATH/keystore.jks
 
-      # ---------- 5. Install Firebase Tools (Installed once globally) ----------
+      # ---------- 5. Install Firebase Tools ----------
       - name: Install Firebase Tools
         run: npm install -g firebase-tools
 
@@ -70,7 +70,7 @@ jobs:
       - name: Build Android APK
         run: ./gradlew :composeApp:assembleRelease
 
-      # ---------- 8. Find Dynamic APK Path (Ensures correct file path) ----------
+      # ---------- 8. Find Dynamic APK Path ----------
       - name: Find APK File Path
         id: find_apk
         run: |
@@ -84,25 +84,22 @@ jobs:
           
           echo "::set-output name=apk_path::$APK_FILE_PATH"
 
-      # ---------- 8.5 Debug APK Information ----------
+      # ---------- 9. Debug APK Info ----------
       - name: Debug APK Package and Signing Info
         if: success() || failure()
         run: |
           APK_PATH="${{ steps.find_apk.outputs.apk_path }}"
           BUILD_TOOLS=$(ls -d $ANDROID_SDK_BUILD_TOOLS/* | tail -n 1)
-
           if [ -f "$APK_PATH" ]; then
             echo "--- 📦 Package Name Verification (aapt) ---"
             $BUILD_TOOLS/aapt dump badging "$APK_PATH" | grep 'package: name='
-          
             echo "--- 🔑 Signing Certificate Verification (apksigner) ---"
             $BUILD_TOOLS/apksigner verify --print-certs "$APK_PATH"
           else
-            echo "Skipping APK debug: APK file not found (likely due to build failure)."
+            echo "Skipping APK debug: APK file not found."
           fi
 
-
-      # ---------- 9. Upload Android to Firebase (Uses Dynamic Path) ----------
+      # ---------- 10. Upload Android to Firebase ----------
       - name: Upload Android to Firebase
         run: |
           firebase appdistribution:distribute ${{ steps.find_apk.outputs.apk_path }} \
@@ -111,13 +108,13 @@ jobs:
             --release-notes "Android build from GitHub Actions - Commit ${{ github.sha }}" \
             --token "$FIREBASE_TOKEN"
 
-      # ---------- 10. Setup Xcode ----------
+      # ---------- 11. Setup Xcode ----------
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.0'
 
-      # ---------- 11. Xcode Cache (Speeds up iOS builds) ----------
+      # ---------- 12. Cache Xcode ----------
       - name: Cache Xcode Build Artifacts
         uses: actions/cache@v3
         with:
@@ -128,11 +125,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-xcode-deriveddata-
 
-      # ---------- 12. Build KMP iOS Framework ----------
+      # ---------- 13. Build KMP iOS Framework ----------
       - name: Build KMP iOS Framework
-        run: ./gradlew :composeApp:packForXcode
+        run: ./gradlew :shared:packForXcode
 
-      # ---------- 13. Increment iOS build number ----------
+      # ---------- 14. Increment iOS build number ----------
       - name: Increment iOS build number
         run: |
           INFOPLIST="$IOS_APP_PATH/iosApp/Info.plist"
@@ -141,7 +138,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" $INFOPLIST
           echo "iOS build number incremented from $CURRENT_BUILD_NUMBER to $NEW_BUILD_NUMBER"
 
-      # ---------- 14. Build iOS IPA ----------
+      # ---------- 15. Build iOS IPA ----------
       - name: Build iOS IPA
         run: |
           cd $IOS_APP_PATH
@@ -157,7 +154,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath build
 
-      # ---------- 15. Upload iOS to Firebase ----------
+      # ---------- 16. Upload iOS to Firebase ----------
       - name: Upload iOS to Firebase
         run: |
           firebase appdistribution:distribute $IOS_APP_PATH/build/iosApp.ipa \
