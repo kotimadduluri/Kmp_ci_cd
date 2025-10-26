@@ -65,12 +65,6 @@ android {
 
     signingConfigs {
         create("release") {
-            // Verify file existence
-            if (!file("keystore.jks").exists()) {
-                throw GradleException("Keystore file not found at given location")
-            } else {
-                println("✅ Using keystore at given localtion")
-            }
             storeFile = file("keystore.jks")
             storePassword = System.getenv("KEYSTORE_PASSWORD")
             keyAlias = System.getenv("KEY_ALIAS")

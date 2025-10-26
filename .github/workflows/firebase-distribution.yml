@@ -91,21 +91,6 @@ jobs:
           fi
           echo "::set-output name=apk_path::$APK_FILE_PATH"
 
-      # ---------- 11. Debug APK ----------
-      - name: Debug APK Package and Signing Info
-        if: success() || failure()
-        run: |
-          APK_PATH="${{ steps.find_apk.outputs.apk_path }}"
-          BUILD_TOOLS=$ANDROID_SDK_BUILD_TOOLS
-          if [ -f "$APK_PATH" ]; then
-            echo "--- 📦 Package Name ---"
-            $BUILD_TOOLS/aapt dump badging "$APK_PATH" | grep 'package: name='
-            echo "--- 🔑 Signing Certificate ---"
-            $BUILD_TOOLS/apksigner verify --print-certs "$APK_PATH"
-          else
-            echo "Skipping APK debug: APK not found."
-          fi
-
       # ---------- 12. Upload Android ----------
       - name: Upload Android to Firebase
         run: |
