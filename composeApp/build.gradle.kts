@@ -65,9 +65,13 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("ANDROID_APP_PATH") + "/keystore.jks"
-            println("Using keystore at: ====> $keystorePath") // optional debug
-            storeFile = file(keystorePath)
+            // Verify file existence
+            if (!file("keystore.jks").exists()) {
+                throw GradleException("Keystore file not found at given location")
+            } else {
+                println("✅ Using keystore at given localtion")
+            }
+            storeFile = file("keystore.jks")
             storePassword = System.getenv("KEYSTORE_PASSWORD")
             keyAlias = System.getenv("KEY_ALIAS")
             keyPassword = System.getenv("KEY_PASSWORD")
