@@ -16,6 +16,10 @@ jobs:
       IOS_APP_ID: ${{ secrets.IOS_APP_ID }}
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
       TESTER_GROUP: "new-release-updates"
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
 
     steps:
       # ---------- 1. Checkout ----------
@@ -29,7 +33,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ---------- 3. Increment Android version ----------
+      # ---------- 3. Decode keystore ----------
+      - name: Decode keystore
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > $ANDROID_APP_PATH/keystore.jks
+          ls -l $ANDROID_APP_PATH/keystore.jks
+
+      # ---------- 4. Increment Android version ----------
       - name: Increment Android versionCode
         run: |
           FILE="$ANDROID_APP_PATH/build.gradle.kts"
@@ -39,11 +49,11 @@ jobs:
           sed -i "" "s/versionName \".*\"/versionName \"$VERSION_NAME\"/" $FILE
           echo "Android versionCode=$VERSION_CODE, versionName=$VERSION_NAME"
 
-      # ---------- 4. Build Android APK ----------
+      # ---------- 5. Build Android APK ----------
       - name: Build Android APK
         run: ./gradlew :composeApp:assembleRelease
 
-      # ---------- 5. Upload Android to Firebase ----------
+      # ---------- 6. Upload Android to Firebase ----------
       - name: Upload Android to Firebase
         run: |
           npm install -g firebase-tools
@@ -53,24 +63,24 @@ jobs:
             --release-notes "Android build from GitHub Actions - Commit ${{ github.sha }}" \
             --token "$FIREBASE_TOKEN"
 
-      # ---------- 6. Setup Xcode ----------
+      # ---------- 7. Setup Xcode ----------
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.0'
 
-      # ---------- 7. Build KMP iOS Framework ----------
+      # ---------- 8. Build KMP iOS Framework ----------
       - name: Build KMP iOS Framework
         run: ./gradlew :shared:packForXcode
 
-      # ---------- 8. Increment iOS build number ----------
+      # ---------- 9. Increment iOS build number ----------
       - name: Increment iOS build number
         run: |
           BUILD_NUMBER=$(date +%s)
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" $IOS_APP_PATH/iosApp/Info.plist
           echo "iOS build number set to $BUILD_NUMBER"
 
-      # ---------- 9. Build iOS IPA ----------
+      # ---------- 10. Build iOS IPA ----------
       - name: Build iOS IPA
         run: |
           cd $IOS_APP_PATH
@@ -86,7 +96,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath build
 
-      # ---------- 10. Upload iOS to Firebase ----------
+      # ---------- 11. Upload iOS to Firebase ----------
       - name: Upload iOS to Firebase
         run: |
           npm install -g firebase-tools
