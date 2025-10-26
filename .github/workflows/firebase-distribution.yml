@@ -12,7 +12,7 @@ jobs:
     env:
       ANDROID_APP_PATH: composeApp
       IOS_APP_PATH: iosApp
-      ANDROID_APP_ID: ${{ secrets.ANDROID_APP_ID }} # Must match the applicationId in build.gradle.kts
+      ANDROID_APP_ID: ${{ secrets.ANDROID_APP_ID }}
       IOS_APP_ID: ${{ secrets.IOS_APP_ID }}
       FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
       TESTER_GROUP: "new-release-updates"
@@ -20,7 +20,6 @@ jobs:
       KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      # Define Android SDK build tools path for aapt/apksigner
       ANDROID_SDK_BUILD_TOOLS: /usr/local/share/android-sdk/build-tools
 
     steps:
@@ -46,10 +45,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # ---------- 4. Decode keystore (Needed for Android signing) ----------
+      # ---------- 4. Decode keystore (FIXED for integrity) ----------
       - name: Decode keystore
         run: |
-          echo "$KEYSTORE_BASE64" | base64 --decode > $ANDROID_APP_PATH/keystore.jks
+          # The -n flag prevents an extra newline from corrupting the Base64 decode.
+          echo -n "$KEYSTORE_BASE64" | base64 --decode > $ANDROID_APP_PATH/keystore.jks
 
       # ---------- 5. Install Firebase Tools (Installed once globally) ----------
       - name: Install Firebase Tools
@@ -75,40 +75,31 @@ jobs:
         id: find_apk
         run: |
           ANDROID_OUTPUT_DIR="$ANDROID_APP_PATH/build/outputs/apk/release"
-          # Finds the first .apk file recursively and quits
           APK_FILE_PATH=$(find "$ANDROID_OUTPUT_DIR" -name "*.apk" -print -quit)
           
           if [ -z "$APK_FILE_PATH" ]; then
-            echo "Error: Could not find any .apk file in $ANDROID_OUTPUT_DIR. Listing contents for debug:"
-            ls -R $ANDROID_APP_PATH/build/outputs/apk/
+            echo "Error: Could not find any .apk file in $ANDROID_OUTPUT_DIR."
             exit 1
           fi
           
           echo "::set-output name=apk_path::$APK_FILE_PATH"
-          echo "Found APK at: $APK_FILE_PATH"
 
-      # ---------- 8.5 Debug APK Information (NEW: Helps resolve Invalid Application ID/Signing) ----------
+      # ---------- 8.5 Debug APK Information ----------
       - name: Debug APK Package and Signing Info
-        if: success() || failure() # Run this even if the build fails, for debugging
+        if: success() || failure()
         run: |
           APK_PATH="${{ steps.find_apk.outputs.apk_path }}"
-          BUILD_TOOLS=$(ls -d $ANDROID_SDK_BUILD_TOOLS/* | tail -n 1) # Get latest build tools version
+          BUILD_TOOLS=$(ls -d $ANDROID_SDK_BUILD_TOOLS/* | tail -n 1)
 
-          if [ ! -f "$APK_PATH" ]; then
-            echo "Skipping APK debug: APK file not found."
-            exit 0
+          if [ -f "$APK_PATH" ]; then
+            echo "--- 📦 Package Name Verification (aapt) ---"
+            $BUILD_TOOLS/aapt dump badging "$APK_PATH" | grep 'package: name='
+          
+            echo "--- 🔑 Signing Certificate Verification (apksigner) ---"
+            $BUILD_TOOLS/apksigner verify --print-certs "$APK_PATH"
+          else
+            echo "Skipping APK debug: APK file not found (likely due to build failure)."
           fi
-          
-          echo "--- 📦 Package Name Verification (aapt) ---"
-          # Uses aapt to verify the package name (Application ID)
-          $BUILD_TOOLS/aapt dump badging "$APK_PATH" | grep 'package: name='
-          
-          echo "--- 🔑 Signing Certificate Verification (apksigner) ---"
-          # Uses apksigner to verify signing details
-          $BUILD_TOOLS/apksigner verify --print-certs "$APK_PATH"
-          
-          echo "IMPORTANT: The 'package: name=' output MUST match your secret ${{ secrets.ANDROID_APP_ID }}."
-          echo "The signing certificate output MUST match your expected release key for successful installation."
 
 
       # ---------- 9. Upload Android to Firebase (Uses Dynamic Path) ----------
@@ -137,9 +128,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-xcode-deriveddata-
 
-      # ---------- 12. Build KMP iOS Framework (Fix: Using :composeApp module) ----------
+      # ---------- 12. Build KMP iOS Framework ----------
       - name: Build KMP iOS Framework
-        run: ./gradlew :composeApp:packForXcode # Confirmed to be the common KMP module name
+        run: ./gradlew :composeApp:packForXcode
 
       # ---------- 13. Increment iOS build number ----------
       - name: Increment iOS build number
