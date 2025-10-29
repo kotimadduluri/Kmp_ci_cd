@@ -54,12 +54,33 @@ jobs:
       - name: Set Build Tools Path
         run: echo "ANDROID_SDK_BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_ENV
 
-      # ---------- 5. Decode Keystore (FIXED: Max integrity for Base64 secret) ----------
+      # ---------- 5. Decode Keystore (Robust method) ----------
       - name: Decode Keystore
         run: |
-          # Strip all whitespace for maximum reliability during decoding
+          # Strips all whitespace for integrity before decoding
           echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > $ANDROID_APP_PATH/keystore.jks
           ls -l $ANDROID_APP_PATH/keystore.jks
+
+      # ---------- 6. Validate Keystore Integrity and Credentials (NEW VALIDATION STEP) ----------
+      - name: Validate Keystore Integrity and Credentials
+        run: |
+          KEYSTORE_PATH="$ANDROID_APP_PATH/keystore.jks"
+          echo "Attempting to validate keystore and credentials..."
+          
+          # Uses keytool (from JDK) to check file corruption, passwords, and alias in one step
+          keytool -list -v \
+            -keystore "$KEYSTORE_PATH" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            -keypass "$KEY_PASSWORD"
+          
+          if [ $? -ne 0 ]; then
+            echo "--- FATAL ERROR: Keystore Validation Failed ---"
+            echo "The file is corrupt OR one of the secrets (PASSWORD/ALIAS) is incorrect."
+            exit 1
+          fi
+          echo "Keystore file successfully validated. Proceeding to build."
+
 
       # ---------- 7. Install Firebase Tools ----------
       - name: Install Firebase Tools
@@ -118,7 +139,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-xcode-
 
-      # ---------- 15. Build KMP iOS Framework (FIXED module name) ----------
+      # ---------- 15. Build KMP iOS Framework ----------
       - name: Build KMP iOS Framework
         run: ./gradlew :composeApp:packForXcode
 
