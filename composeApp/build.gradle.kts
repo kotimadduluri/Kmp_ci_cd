@@ -62,8 +62,19 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("keystore.jks")
+            storePassword = providers.gradleProperty("keyStorePassword").get()
+            keyAlias = providers.gradleProperty("keyAlias").get()
+            keyPassword = providers.gradleProperty("keyPassword").get()
+        }
+    }
+
     buildTypes {
         getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
         }
     }

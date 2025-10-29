@@ -1,0 +1,70 @@
+name: 🤖 Android Build and Distribution
+
+on:
+  workflow_call:
+    secrets:
+      KEYSTORE_PASSWORD: { required: true }
+      KEY_PASSWORD: { required: true }
+      KEY_ALIAS: { required: true }
+      ANDROID_APP_ID: { required: true }
+      FIREBASE_TOKEN: { required: true }
+    inputs:
+      keystore_path: { required: true, type: string }
+
+jobs:
+  build_android:
+    runs-on: macos-latest
+
+    env:
+      ANDROID_APP_PATH: composeApp
+      TESTER_GROUP: "new-release-updates"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The main workflow decoded the keystore; this job re-creates the file.
+      - name: Download Keystore Artifact (Bypass for file transfer)
+        run: |
+          # Since Artifacts are overkill for this, and we only pass the path, 
+          # we trust the calling workflow to have placed the file.
+          # We just need to ensure JDK is set up if this were truly independent.
+
+      - name: Setup Android SDK & Build Tools
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: 34
+          build-tools: 34.0.0
+
+      # Steps 1: Increment Version
+      - name: Increment Android versionCode
+        run: |
+          FILE="$ANDROID_APP_PATH/build.gradle.kts"
+          CURRENT_CODE=$(grep "versionCode" $FILE | grep -o '[0-9]\+' | head -n 1)
+          NEW_CODE=$((CURRENT_CODE + 1))
+          sed -i "" "s/versionCode $CURRENT_CODE/versionCode $NEW_CODE/" $FILE
+          VERSION_NAME="1.0.$NEW_CODE"
+          sed -i "" "s/versionName \".*\"/versionName \"$VERSION_NAME\"/" $FILE
+          echo "Android versionCode=$NEW_CODE, versionName=$VERSION_NAME"
+
+      # Steps 2: Build Android APK (Standard CI Signing Fix)
+      - name: Build Android APK
+        run: |
+          # Pass secrets as properties (-P) to match the build.gradle.kts file.
+          ./gradlew :composeApp:assembleRelease \
+            -PkeyStorePassword=${{ secrets.KEYSTORE_PASSWORD }} \
+            -PkeyAlias=${{ secrets.KEY_ALIAS }} \
+            -PkeyPassword=${{ secrets.KEY_PASSWORD }}
+
+      # Steps 3: Find and Upload APK
+      - name: Find and Upload APK
+        id: find_apk
+        run: |
+          ANDROID_OUTPUT_DIR="$ANDROID_APP_PATH/build/outputs/apk/release"
+          APK_FILE_PATH=$(find "$ANDROID_OUTPUT_DIR" -name "*.apk" -print -quit)
+          
+          firebase appdistribution:distribute "$APK_FILE_PATH" \
+            --app "${{ secrets.ANDROID_APP_ID }}" \
+            --groups "$TESTER_GROUP" \
+            --release-notes "Android build from GitHub Actions - Commit ${{ github.sha }}" \
+            --token "${{ secrets.FIREBASE_TOKEN }}"
