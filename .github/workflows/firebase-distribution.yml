@@ -54,11 +54,10 @@ jobs:
       - name: Set Build Tools Path
         run: echo "ANDROID_SDK_BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_ENV
 
-      # ---------- 5. Decode Keystore ----------
+      # ---------- 5. Decode Keystore (FIXED: Max integrity for Base64 secret) ----------
       - name: Decode Keystore
         run: |
-          # Use 'tr -d' to strip ALL whitespace from the KEYSTORE_BASE64 secret 
-          # before piping it to base64 --decode. This resolves the padding error.
+          # Strip all whitespace for maximum reliability during decoding
           echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > $ANDROID_APP_PATH/keystore.jks
           ls -l $ANDROID_APP_PATH/keystore.jks
 
@@ -119,9 +118,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-xcode-
 
-      # ---------- 15. Build KMP iOS Framework ----------
+      # ---------- 15. Build KMP iOS Framework (FIXED module name) ----------
       - name: Build KMP iOS Framework
-        run: ./gradlew :shared:packForXcode
+        run: ./gradlew :composeApp:packForXcode
 
       # ---------- 16. Increment iOS build number ----------
       - name: Increment iOS build number
