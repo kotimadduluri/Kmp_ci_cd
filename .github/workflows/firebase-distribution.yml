@@ -57,7 +57,9 @@ jobs:
       # ---------- 5. Decode Keystore ----------
       - name: Decode Keystore
         run: |
-          printf "%s" "$KEYSTORE_BASE64" | base64 --decode > $ANDROID_APP_PATH/keystore.jks
+          # Use 'tr -d' to strip ALL whitespace from the KEYSTORE_BASE64 secret 
+          # before piping it to base64 --decode. This resolves the padding error.
+          echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > $ANDROID_APP_PATH/keystore.jks
           ls -l $ANDROID_APP_PATH/keystore.jks
 
       # ---------- 7. Install Firebase Tools ----------
