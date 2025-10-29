@@ -66,9 +66,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = file("keystore.jks")
-            storePassword = "test@1234"
-            keyAlias = "KMPTEST"
-            keyPassword = "test@1234"
+            storePassword = providers.gradleProperty("keyStorePassword").get()
+            keyAlias = providers.gradleProperty("keyAlias").get()
+            keyPassword = providers.gradleProperty("keyPassword").get()
         }
     }
 

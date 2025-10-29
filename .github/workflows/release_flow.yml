@@ -1,0 +1,62 @@
+name: 🧩 Main KMP Distribution
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  # This job runs first to ensure all dependencies are set up and decoded once.
+  setup_env:
+    name: Setup Environment and Decode Keystore
+    runs-on: macos-latest
+    outputs:
+      # Pass the decoded keystore status to the next jobs
+      keystore_path: ${{ steps.decode.outputs.keystore_path }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Gradle Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # Keystore Decode
+      - name: Decode Keystore
+        id: decode
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > composeApp/keystore.jks
+          # Output the path to be used by the caller jobs (Android)
+          echo "keystore_path=composeApp/keystore.jks" >> $GITHUB_OUTPUT
+
+  # Call Android Build Workflow
+  android_build:
+    needs: setup_env
+    name: 🤖 Build & Distribute Android
+    uses: ./.github/workflows/android_release.yml
+    secrets: inherit
+    with:
+      # Pass the output from the setup_env job
+      keystore_path: ${{ needs.setup_env.outputs.keystore_path }}
+
+  # Call iOS Build Workflow
+  ios_build:
+    needs: setup_env
+    name: 🍏 Build & Distribute iOS
+    uses: ./.github/workflows/ios_release.yml
+    secrets: inherit

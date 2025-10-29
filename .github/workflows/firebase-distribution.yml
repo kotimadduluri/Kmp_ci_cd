@@ -54,39 +54,17 @@ jobs:
       - name: Set Build Tools Path
         run: echo "ANDROID_SDK_BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0" >> $GITHUB_ENV
 
-      # ---------- 5. Decode Keystore (Robust method) ----------
+      # ---------- 5. Decode Keystore (Standard Robust Method) ----------
       - name: Decode Keystore
         run: |
-          # Strips all whitespace for integrity before decoding
+          # Uses tr to strip ALL whitespace before decoding for integrity.
           echo "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > $ANDROID_APP_PATH/keystore.jks
-          ls -l $ANDROID_APP_PATH/keystore.jks
 
-      # ---------- 6. Validate Keystore Integrity and Credentials (NEW VALIDATION STEP) ----------
-      - name: Validate Keystore Integrity and Credentials
-        run: |
-          KEYSTORE_PATH="$ANDROID_APP_PATH/keystore.jks"
-          echo "Attempting to validate keystore and credentials..."
-          
-          # Uses keytool (from JDK) to check file corruption, passwords, and alias in one step
-          keytool -list -v \
-            -keystore "$KEYSTORE_PATH" \
-            -storepass "$KEYSTORE_PASSWORD" \
-            -alias "$KEY_ALIAS" \
-            -keypass "$KEY_PASSWORD"
-          
-          if [ $? -ne 0 ]; then
-            echo "--- FATAL ERROR: Keystore Validation Failed ---"
-            echo "The file is corrupt OR one of the secrets (PASSWORD/ALIAS) is incorrect."
-            exit 1
-          fi
-          echo "Keystore file successfully validated. Proceeding to build."
-
-
-      # ---------- 7. Install Firebase Tools ----------
+      # ---------- 6. Install Firebase Tools ----------
       - name: Install Firebase Tools
         run: npm install -g firebase-tools
 
-      # ---------- 8. Increment Android version ----------
+      # ---------- 7. Increment Android version ----------
       - name: Increment Android versionCode
         run: |
           FILE="$ANDROID_APP_PATH/build.gradle.kts"
@@ -97,11 +75,16 @@ jobs:
           sed -i "" "s/versionName \".*\"/versionName \"$VERSION_NAME\"/" $FILE
           echo "Android versionCode=$NEW_CODE, versionName=$VERSION_NAME"
 
-      # ---------- 9. Build Android APK ----------
+      # ---------- 8. Build Android APK (Standard CI Signing Fix) ----------
       - name: Build Android APK
-        run: ./gradlew :composeApp:assembleRelease
+        run: |
+          # Pass secrets as properties (-P) directly to Gradle, matching the build.gradle.kts file.
+          ./gradlew :composeApp:assembleRelease \
+            -PkeyStorePassword=${{ env.KEYSTORE_PASSWORD }} \
+            -PkeyAlias=${{ env.KEY_ALIAS }} \
+            -PkeyPassword=${{ env.KEY_PASSWORD }}
 
-      # ---------- 10. Find APK ----------
+      # ---------- 9. Find APK ----------
       - name: Find APK File Path
         id: find_apk
         run: |
@@ -113,7 +96,7 @@ jobs:
           fi
           echo "::set-output name=apk_path::$APK_FILE_PATH"
 
-      # ---------- 12. Upload Android ----------
+      # ---------- 10. Upload Android ----------
       - name: Upload Android to Firebase
         run: |
           firebase appdistribution:distribute ${{ steps.find_apk.outputs.apk_path }} \
@@ -122,13 +105,13 @@ jobs:
             --release-notes "Android build from GitHub Actions - Commit ${{ github.sha }}" \
             --token "$FIREBASE_TOKEN"
 
-      # ---------- 13. Setup Xcode ----------
+      # ---------- 11. Setup Xcode ----------
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.0'
 
-      # ---------- 14. Cache Xcode ----------
+      # ---------- 12. Cache Xcode ----------
       - name: Cache Xcode Build Artifacts
         uses: actions/cache@v3
         with:
@@ -139,11 +122,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-xcode-
 
-      # ---------- 15. Build KMP iOS Framework ----------
+      # ---------- 13. Build KMP iOS Framework (Correct Task Name) ----------
       - name: Build KMP iOS Framework
-        run: ./gradlew :composeApp:packForXcode
+        run: |
+          # Uses the correct task name for generating the framework for Xcode.
+          ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode
 
-      # ---------- 16. Increment iOS build number ----------
+      # ---------- 14. Increment iOS build number ----------
       - name: Increment iOS build number
         run: |
           INFOPLIST="$IOS_APP_PATH/iosApp/Info.plist"
@@ -152,7 +137,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" $INFOPLIST
           echo "iOS build number incremented from $CURRENT_BUILD_NUMBER to $NEW_BUILD_NUMBER"
 
-      # ---------- 17. Build iOS IPA ----------
+      # ---------- 15. Build iOS IPA ----------
       - name: Build iOS IPA
         run: |
           cd $IOS_APP_PATH
@@ -168,7 +153,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath build
 
-      # ---------- 18. Upload iOS ----------
+      # ---------- 16. Upload iOS ----------
       - name: Upload iOS to Firebase
         run: |
           firebase appdistribution:distribute $IOS_APP_PATH/build/iosApp.ipa \
