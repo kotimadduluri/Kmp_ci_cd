@@ -5,6 +5,10 @@ on:
     secrets:
       IOS_APP_ID: { required: true }
       FIREBASE_TOKEN: { required: true }
+      # Android secrets must be declared and passed to satisfy the KMP module config
+      KEYSTORE_PASSWORD: { required: true }
+      KEY_ALIAS: { required: true }
+      KEY_PASSWORD: { required: true }
 
 jobs:
   build_ios:
@@ -18,36 +22,35 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 1. Download the keystore file artifact (Required for Gradle configuration phase)
+      - name: Download Keystore Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: android-signing-keystore
+          path: composeApp/
+
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.0'
 
-      - name: Cache Xcode Build Artifacts
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/Library/Developer/Xcode/DerivedData
-            ${{ env.IOS_APP_PATH }}/build
-          key: ${{ runner.os }}-xcode-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-xcode-
-
-      # Steps 1: Build KMP iOS Framework (Correct Task Name)
+      # 2. Build KMP iOS Framework (CRITICAL FIX: Pass Android Secrets to prevent configuration crash)
       - name: Build KMP iOS Framework
         run: |
-          ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode
+          ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode \
+            -PKEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} \
+            -PKEY_ALIAS=${{ secrets.KEY_ALIAS }} \
+            -PKEY_PASSWORD=${{ secrets.KEY_PASSWORD }}
 
-      # Steps 2: Increment iOS build number
+      # 3. Increment iOS build number
       - name: Increment iOS build number
         run: |
           INFOPLIST="$IOS_APP_PATH/iosApp/Info.plist"
           CURRENT_BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $INFOPLIST)
           NEW_BUILD_NUMBER=$((CURRENT_BUILD_NUMBER + 1))
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" $INFOPLIST
-          echo "iOS build number incremented from $CURRENT_BUILD_NUMBER to $NEW_BUILD_NUMBER"
 
-      # Steps 3: Build iOS IPA
+      # 4. Build iOS IPA
       - name: Build iOS IPA
         run: |
           cd $IOS_APP_PATH
@@ -63,7 +66,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath build
 
-      # Steps 4: Upload iOS
+      # 5. Upload iOS
       - name: Upload iOS to Firebase
         run: |
           firebase appdistribution:distribute $IOS_APP_PATH/build/iosApp.ipa \
