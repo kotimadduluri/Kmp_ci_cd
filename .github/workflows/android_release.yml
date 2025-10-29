@@ -21,7 +21,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1. Download the keystore file artifact (from setup_env job)
+      # 1. Download Keystore (from parent job)
       - name: Download Keystore Artifact
         uses: actions/download-artifact@v4
         with:
@@ -34,7 +34,11 @@ jobs:
           api-level: 34
           build-tools: 34.0.0
 
-      # 2. Build Android APK (FINAL FIX: Pass secrets via -P properties)
+      # 2. FIX: Install Firebase Tools within this job
+      - name: Install Firebase Tools
+        run: npm install -g firebase-tools
+
+      # 3. Build Android APK (Pass secrets via -P properties)
       - name: Build Android APK
         run: |
           ./gradlew :composeApp:assembleRelease \
@@ -42,13 +46,14 @@ jobs:
             -PKEY_ALIAS=${{ secrets.KEY_ALIAS }} \
             -PKEY_PASSWORD=${{ secrets.KEY_PASSWORD }}
 
-      # 3. Find and Upload APK
+      # 4. Find and Upload APK
       - name: Find and Upload APK
         id: find_apk
         run: |
           ANDROID_OUTPUT_DIR="$ANDROID_APP_PATH/build/outputs/apk/release"
           APK_FILE_PATH=$(find "$ANDROID_OUTPUT_DIR" -name "*.apk" -print -quit)
           
+          # The 'firebase' command is now available
           firebase appdistribution:distribute "$APK_FILE_PATH" \
             --app "${{ secrets.ANDROID_APP_ID }}" \
             --groups "$TESTER_GROUP" \

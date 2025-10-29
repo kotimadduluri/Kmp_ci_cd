@@ -4,6 +4,16 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      build_target:
+        description: 'Select the build target'
+        required: true
+        type: choice
+        default: 'all'
+        options:
+          - 'all'
+          - 'android'
+          - 'ios'
 
 jobs:
   setup_env:
@@ -30,7 +40,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # 1. Decode Keystore (Runs once in the setup job)
+      # 1. Decode Keystore
       - name: Decode Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -45,16 +55,26 @@ jobs:
           path: composeApp/keystore.jks
           retention-days: 1
 
-  # Call Android Build Workflow
+  # Call Android Build Workflow (Conditional)
   android_build:
     needs: setup_env
     name: 🤖 Build & Distribute Android
-    uses: ./.github/workflows/android_release.yml
+    if: |
+      github.event_name == 'push' || 
+      github.event.inputs.build_target == 'android' || 
+      github.event.inputs.build_target == 'all'
+
+    uses: ./.github/workflows/android_ci.yml
     secrets: inherit
 
-  # Call iOS Build Workflow
+  # Call iOS Build Workflow (Conditional)
   ios_build:
     needs: setup_env
     name: 🍏 Build & Distribute iOS
-    uses: ./.github/workflows/ios_release.yml
+    if: |
+      github.event_name == 'push' || 
+      github.event.inputs.build_target == 'ios' || 
+      github.event.inputs.build_target == 'all'
+
+    uses: ./.github/workflows/ios_ci.yml
     secrets: inherit
