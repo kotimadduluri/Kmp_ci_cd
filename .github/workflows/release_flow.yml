@@ -64,7 +64,7 @@ jobs:
       github.event.inputs.build_target == 'android' || 
       github.event.inputs.build_target == 'all'
 
-    uses: ./.github/workflows/android_ci.yml
+    uses: ./.github/workflows/android_release.yml
     secrets: inherit
 
   # Call iOS Build Workflow (Conditional)
@@ -76,5 +76,5 @@ jobs:
       github.event.inputs.build_target == 'ios' || 
       github.event.inputs.build_target == 'all'
 
-    uses: ./.github/workflows/ios_ci.yml
+    uses: ./.github/workflows/ios_release.yml
     secrets: inherit
