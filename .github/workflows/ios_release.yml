@@ -47,7 +47,7 @@ jobs:
           SDK_NAME: 'iphoneos'
         run: |
           echo "🏗️ Building Kotlin Multiplatform (Compose) iOS framework..."
-          ./gradlew :composeApp:packForXcode \
+          ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode \
             -PKEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} \
             -PKEY_ALIAS=${{ secrets.KEY_ALIAS }} \
             -PKEY_PASSWORD=${{ secrets.KEY_PASSWORD }}
