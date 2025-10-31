@@ -38,7 +38,7 @@ jobs:
       - name: 📦 Install Dependencies (CocoaPods)
         run: |
           # Navigate into the nested Xcode project directory: iosApp/iosApp
-          cd $IOS_APP_PATH/$XCODE_PROJECT_PATH 
+          cd $IOS_APP_PATH 
           
           echo "🔍 Running pod install in $(pwd)"
           pod install --repo-update 
@@ -47,7 +47,7 @@ jobs:
       # 3. Increment iOS Build Number
       - name: 🔢 Increment iOS Build Number
         run: |
-          INFOPLIST="$IOS_APP_PATH/$XCODE_PROJECT_PATH/Info.plist" 
+          INFOPLIST="$IOS_APP_PATH/Info.plist" 
           
           if [ -f "$INFOPLIST" ]; then
             CURRENT_BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $INFOPLIST)
@@ -81,7 +81,7 @@ jobs:
           xcodebuild \
             -exportArchive \
             -archivePath build/iosApp.xcarchive \
-            -exportOptionsPlist $XCODE_PROJECT_PATH/ExportOptions.plist \
+            -exportOptionsPlist ExportOptions.plist \
             -exportPath build \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
