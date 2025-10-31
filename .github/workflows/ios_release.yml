@@ -1,11 +1,13 @@
 name: 🍏 iOS Build and Distribution (KMP ComposeApp)
 
 on:
+  # This makes the workflow reusable
   workflow_call:
     secrets:
       IOS_APP_ID: { required: true }
       FIREBASE_TOKEN: { required: true }
-      # Android secrets required for Gradle config phase (ONLY if your Gradle files require them to merely parse)
+      # These Android secrets are included, assuming they are required for
+      # the Gradle configuration phase, even if Android isn't built here.
       KEYSTORE_PASSWORD: { required: true }
       KEY_ALIAS: { required: true }
       KEY_PASSWORD: { required: true }
@@ -15,61 +17,53 @@ jobs:
     runs-on: macos-latest
 
     env:
+      # Primary path to the top-level Xcode project folder
       IOS_APP_PATH: iosApp
       TESTER_GROUP: "new-release-updates"
-      # Note: Setting these specific env vars for an explicit Gradle call is now unnecessary
-      # CONFIGURATION: Release
-      # SDK_NAME: iphoneos
-      # ARCHS: arm64
 
     steps:
-      # ---------- 1. Checkout ----------
+      # ---------- 1. Checkout & Download Artifacts ----------
       - name: 📦 Checkout Repository
         uses: actions/checkout@v4
-
-      # ---------- 2. Download Keystore (Retained for Gradle config phase if needed) ----------
       - name: 🔑 Download Keystore Artifact
+        # Required if your main Gradle build needs this file during its configuration phase
         uses: actions/download-artifact@v4
         with:
           name: android-signing-keystore
           path: composeApp/
 
-      # ---------- 3. Setup Xcode ----------
+      # ---------- 2. Setup Tools ----------
       - name: 🛠️ Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '16.0'
-
-      # ---------- 4. Install Firebase Tools ----------
       - name: 🔥 Install Firebase Tools
         run: npm install -g firebase-tools
 
-      # --- REMOVED STEP 5: Building the KMP framework directly with Gradle is the cause of the "Could not infer" error. ---
-      # --- Xcode will call Gradle automatically in the next step. ---
-
-      # ---------- 5. Increment iOS build number (renumbered) ----------
+      # ---------- 3. Increment iOS Build Number (FIXED PATH AND LOGIC) ----------
       - name: 🔢 Increment iOS Build Number
         run: |
-          INFOPLIST="$IOS_APP_PATH/iosApp/Info.plist"
+          # Check for the Info.plist file inside the nested Xcode project directory
+          INFOPLIST="$IOS_APP_PATH/iosApp/Info.plist" 
+          
           if [ -f "$INFOPLIST" ]; then
+            # Read and increment the Build Number (:CFBundleVersion)
             CURRENT_BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $INFOPLIST)
             NEW_BUILD_NUMBER=$((CURRENT_BUILD_NUMBER + 1))
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" $INFOPLIST
             echo "✅ iOS build number incremented: $CURRENT_BUILD_NUMBER → $NEW_BUILD_NUMBER"
           else
-            echo "⚠️ Info.plist not found at $INFOPLIST"
+            echo "❌ Info.plist not found at $INFOPLIST. Job Failed."
+            exit 1
           fi
 
-      # ---------- 6. Build and Archive iOS IPA (FIXED STEP) ----------
+      # ---------- 4. Build and Archive iOS IPA (FIXED: Single xcodebuild call) ----------
       - name: 📱 Build and Export iOS IPA
         run: |
           cd $IOS_APP_PATH
-          echo "🏗️ Archiving iOS app (The KMP framework build is triggered here)..."
+          echo "🏗️ Archiving iOS app. (This automatically triggers the KMP framework build via Gradle)..."
           
-          # --- ARCHIVE STEP ---
-          # This command tells Xcode to build for a device and produces the archive. 
-          # Crucially, Xcode sets the required environment variables (like PLATFORM_NAME) 
-          # which the internal Gradle task uses, fixing your original error.
+          # ARCHIVE STEP: Builds the KMP framework and the iOS app.
           xcodebuild \
             archive \
             -workspace iosApp.xcworkspace \
@@ -77,11 +71,10 @@ jobs:
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/iosApp.xcarchive \
-            # Use the NO-SIGNING flag if you don't install a certificate
-            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO # Unsigned flags
           
           echo "📦 Exporting unsigned IPA..."
-          # --- EXPORT STEP ---
+          # EXPORT STEP
           xcodebuild \
             -exportArchive \
             -archivePath build/iosApp.xcarchive \
@@ -89,7 +82,7 @@ jobs:
             -exportPath build \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
-      # ---------- 7. Verify IPA (renumbered) ----------
+      # ---------- 5. Verify & 6. Upload iOS to Firebase ----------
       - name: 🧾 Verify Generated IPA
         run: |
           echo "🔍 Checking for IPA file..."
@@ -102,7 +95,6 @@ jobs:
             ls -lh "$IPA_PATH"
           fi
 
-      # ---------- 8. Upload iOS to Firebase (renumbered) ----------
       - name: 🚀 Upload iOS Build to Firebase
         run: |
           IPA_PATH=$(find $IOS_APP_PATH/build -name "*.ipa" -print -quit)
@@ -110,7 +102,7 @@ jobs:
             firebase appdistribution:distribute "$IPA_PATH" \
               --app "${{ secrets.IOS_APP_ID }}" \
               --groups "$TESTER_GROUP" \
-              --release-notes "🍏 Unsigned iOS build from GitHub Actions (Commit: ${{ github.sha }})" \
+              --release-notes "🍏 CI Build #${{ steps.increment_build_number.outputs.NEW_BUILD_NUMBER }} (Commit: ${{ github.sha }})" \
               --token "${{ secrets.FIREBASE_TOKEN }}"
           else
             echo "❌ IPA not found, skipping Firebase upload."
