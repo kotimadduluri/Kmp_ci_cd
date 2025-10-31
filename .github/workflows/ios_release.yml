@@ -5,7 +5,7 @@ on:
     secrets:
       IOS_APP_ID: { required: true }
       FIREBASE_TOKEN: { required: true }
-      # Android secrets required for Gradle config phase
+      # Android secrets required for Gradle config phase (ONLY if your Gradle files require them to merely parse)
       KEYSTORE_PASSWORD: { required: true }
       KEY_ALIAS: { required: true }
       KEY_PASSWORD: { required: true }
@@ -17,13 +17,17 @@ jobs:
     env:
       IOS_APP_PATH: iosApp
       TESTER_GROUP: "new-release-updates"
+      # Note: Setting these specific env vars for an explicit Gradle call is now unnecessary
+      # CONFIGURATION: Release
+      # SDK_NAME: iphoneos
+      # ARCHS: arm64
 
     steps:
       # ---------- 1. Checkout ----------
       - name: 📦 Checkout Repository
         uses: actions/checkout@v4
 
-      # ---------- 2. Download Keystore (for Gradle config) ----------
+      # ---------- 2. Download Keystore (Retained for Gradle config phase if needed) ----------
       - name: 🔑 Download Keystore Artifact
         uses: actions/download-artifact@v4
         with:
@@ -40,21 +44,10 @@ jobs:
       - name: 🔥 Install Firebase Tools
         run: npm install -g firebase-tools
 
-      # ---------- 5. Build KMP iOS Framework ----------
-      - name: 🧩 Build KMP iOS Framework (Unsigned)
-        run: |
-          echo "🏗️ Building Kotlin Multiplatform (Compose) iOS framework..."
-          export CONFIGURATION=Release
-          export SDK_NAME=iphoneos
-          export ARCHS=arm64
-          export TARGET_BUILD_DIR=$PWD/build/ios
-          export CONFIGURATION_BUILD_DIR=$PWD/build/ios
-          ./gradlew :composeApp:embedAndSignAppleFrameworkForXcode \
-            -PKEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }} \
-            -PKEY_ALIAS=${{ secrets.KEY_ALIAS }} \
-            -PKEY_PASSWORD=${{ secrets.KEY_PASSWORD }}
+      # --- REMOVED STEP 5: Building the KMP framework directly with Gradle is the cause of the "Could not infer" error. ---
+      # --- Xcode will call Gradle automatically in the next step. ---
 
-      # ---------- 6. Increment iOS build number ----------
+      # ---------- 5. Increment iOS build number (renumbered) ----------
       - name: 🔢 Increment iOS Build Number
         run: |
           INFOPLIST="$IOS_APP_PATH/iosApp/Info.plist"
@@ -67,20 +60,28 @@ jobs:
             echo "⚠️ Info.plist not found at $INFOPLIST"
           fi
 
-      # ---------- 7. Build unsigned iOS IPA ----------
-      - name: 📱 Build Unsigned iOS IPA
+      # ---------- 6. Build and Archive iOS IPA (FIXED STEP) ----------
+      - name: 📱 Build and Export iOS IPA
         run: |
           cd $IOS_APP_PATH
-          echo "🏗️ Archiving iOS app (unsigned)..."
+          echo "🏗️ Archiving iOS app (The KMP framework build is triggered here)..."
+          
+          # --- ARCHIVE STEP ---
+          # This command tells Xcode to build for a device and produces the archive. 
+          # Crucially, Xcode sets the required environment variables (like PLATFORM_NAME) 
+          # which the internal Gradle task uses, fixing your original error.
           xcodebuild \
+            archive \
             -workspace iosApp.xcworkspace \
             -scheme iosApp \
             -sdk iphoneos \
             -configuration Release \
-            -archivePath build/iosApp.xcarchive archive \
+            -archivePath build/iosApp.xcarchive \
+            # Use the NO-SIGNING flag if you don't install a certificate
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-
+          
           echo "📦 Exporting unsigned IPA..."
+          # --- EXPORT STEP ---
           xcodebuild \
             -exportArchive \
             -archivePath build/iosApp.xcarchive \
@@ -88,7 +89,7 @@ jobs:
             -exportPath build \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
-      # ---------- 8. Verify IPA ----------
+      # ---------- 7. Verify IPA (renumbered) ----------
       - name: 🧾 Verify Generated IPA
         run: |
           echo "🔍 Checking for IPA file..."
@@ -101,7 +102,7 @@ jobs:
             ls -lh "$IPA_PATH"
           fi
 
-      # ---------- 9. Upload iOS to Firebase ----------
+      # ---------- 8. Upload iOS to Firebase (renumbered) ----------
       - name: 🚀 Upload iOS Build to Firebase
         run: |
           IPA_PATH=$(find $IOS_APP_PATH/build -name "*.ipa" -print -quit)
