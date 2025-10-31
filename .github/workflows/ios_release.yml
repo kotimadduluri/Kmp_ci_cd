@@ -1,13 +1,10 @@
 name: 🍏 iOS Build and Distribution (KMP ComposeApp)
 
 on:
-  # This makes the workflow reusable
   workflow_call:
     secrets:
       IOS_APP_ID: { required: true }
       FIREBASE_TOKEN: { required: true }
-      # These Android secrets are included, assuming they are required for
-      # the Gradle configuration phase, even if Android isn't built here.
       KEYSTORE_PASSWORD: { required: true }
       KEY_ALIAS: { required: true }
       KEY_PASSWORD: { required: true }
@@ -17,22 +14,20 @@ jobs:
     runs-on: macos-latest
 
     env:
-      # Primary path to the top-level Xcode project folder
       IOS_APP_PATH: iosApp
       TESTER_GROUP: "new-release-updates"
 
     steps:
-      # ---------- 1. Checkout & Download Artifacts ----------
+      # 1. Checkout & 2. Download Artifacts (Unchanged)
       - name: 📦 Checkout Repository
         uses: actions/checkout@v4
       - name: 🔑 Download Keystore Artifact
-        # Required if your main Gradle build needs this file during its configuration phase
         uses: actions/download-artifact@v4
         with:
           name: android-signing-keystore
           path: composeApp/
 
-      # ---------- 2. Setup Tools ----------
+      # 3. Setup Tools (Unchanged)
       - name: 🛠️ Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -40,30 +35,38 @@ jobs:
       - name: 🔥 Install Firebase Tools
         run: npm install -g firebase-tools
 
-      # ---------- 3. Increment iOS Build Number (FIXED PATH AND LOGIC) ----------
+      # ----------------------------------------------------
+      # 💥 NEW FIX STEP: Install Pods to create the .xcworkspace file
+      # ----------------------------------------------------
+      - name: 📦 Install Dependencies (CocoaPods)
+        run: |
+          cd $IOS_APP_PATH
+          # Use --repo-update to ensure the pod repo is current
+          pod install --repo-update 
+          echo "✅ CocoaPods installed successfully, creating iosApp.xcworkspace."
+
+      # 4. Increment iOS Build Number (Path logic unchanged, requires Info.plist fix)
       - name: 🔢 Increment iOS Build Number
         run: |
-          # Check for the Info.plist file inside the nested Xcode project directory
           INFOPLIST="$IOS_APP_PATH/iosApp/Info.plist" 
           
           if [ -f "$INFOPLIST" ]; then
-            # Read and increment the Build Number (:CFBundleVersion)
             CURRENT_BUILD_NUMBER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $INFOPLIST)
             NEW_BUILD_NUMBER=$((CURRENT_BUILD_NUMBER + 1))
             /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NEW_BUILD_NUMBER" $INFOPLIST
             echo "✅ iOS build number incremented: $CURRENT_BUILD_NUMBER → $NEW_BUILD_NUMBER"
           else
-            echo "❌ Info.plist not found at $INFOPLIST. Job Failed."
+            echo "❌ Info.plist not found at $INFOPLIST. Check \$IOS_APP_PATH definition."
             exit 1
           fi
 
-      # ---------- 4. Build and Archive iOS IPA (FIXED: Single xcodebuild call) ----------
+      # 5. Build and Archive iOS IPA (Uses the now-existing .xcworkspace)
       - name: 📱 Build and Export iOS IPA
         run: |
           cd $IOS_APP_PATH
-          echo "🏗️ Archiving iOS app. (This automatically triggers the KMP framework build via Gradle)..."
+          echo "🏗️ Archiving iOS app..."
           
-          # ARCHIVE STEP: Builds the KMP framework and the iOS app.
+          # ARCHIVE STEP: Targets the .xcworkspace, which should now exist.
           xcodebuild \
             archive \
             -workspace iosApp.xcworkspace \
@@ -71,7 +74,7 @@ jobs:
             -sdk iphoneos \
             -configuration Release \
             -archivePath build/iosApp.xcarchive \
-            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO # Unsigned flags
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
           
           echo "📦 Exporting unsigned IPA..."
           # EXPORT STEP
@@ -82,17 +85,15 @@ jobs:
             -exportPath build \
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
 
-      # ---------- 5. Verify & 6. Upload iOS to Firebase ----------
+      # 6. Verify & 7. Upload iOS to Firebase (Unchanged)
       - name: 🧾 Verify Generated IPA
         run: |
-          echo "🔍 Checking for IPA file..."
           IPA_PATH=$(find $IOS_APP_PATH/build -name "*.ipa" -print -quit)
           if [ -z "$IPA_PATH" ]; then
             echo "❌ No IPA file found!"
             exit 1
           else
             echo "✅ IPA generated successfully: $IPA_PATH"
-            ls -lh "$IPA_PATH"
           fi
 
       - name: 🚀 Upload iOS Build to Firebase
@@ -102,7 +103,7 @@ jobs:
             firebase appdistribution:distribute "$IPA_PATH" \
               --app "${{ secrets.IOS_APP_ID }}" \
               --groups "$TESTER_GROUP" \
-              --release-notes "🍏 CI Build #${{ steps.increment_build_number.outputs.NEW_BUILD_NUMBER }} (Commit: ${{ github.sha }})" \
+              --release-notes "🍏 CI Build (Commit: ${{ github.sha }})" \
               --token "${{ secrets.FIREBASE_TOKEN }}"
           else
             echo "❌ IPA not found, skipping Firebase upload."
